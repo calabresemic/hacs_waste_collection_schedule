@@ -389,6 +389,24 @@ class WasteCollectionConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call
     ) -> ConfigFlowResult:
         await self._async_setup_sources()
 
+        # This fork ships exactly one source, so the country and source pickers
+        # would each be a dropdown with a single entry. Skip both and go
+        # straight to the source arguments. If more sources are ever added back
+        # to sources.json the normal two-step selection returns automatically.
+        available = [
+            (country, source)
+            for country, sources in self._sources.items()
+            for source in sources
+        ]
+        if len(available) == 1:
+            country, source = available[0]
+            self._country = country
+            self._source = source["module"]
+            self._title = source["title"]
+            self._id = source["id"]
+            self._extra_info_default_params = source["default_params"]
+            return await self.async_step_args()
+
         if info is not None:
             self._country = info[CONF_COUNTRY_NAME]
             return await self.async_step_source()

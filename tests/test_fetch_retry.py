@@ -114,36 +114,3 @@ def test_coordinator_first_refresh_reports_failed_fetch() -> None:
             await coordinator._async_update_data()
 
     asyncio.run(_run())
-
-
-def test_yaml_api_retries_all_sources_after_partial_failure() -> None:
-    from custom_components.waste_collection_schedule.waste_collection_api import (
-        WasteCollectionApi,
-    )
-
-    class _Shell:
-        def __init__(self, *results: bool) -> None:
-            self.fetch_results = iter(results)
-            self.fetch_count = 0
-
-        def fetch(self) -> bool:
-            self.fetch_count += 1
-            return next(self.fetch_results)
-
-    successful_shell = _Shell(True, True)
-    recovering_shell = _Shell(False, True)
-    api = object.__new__(WasteCollectionApi)
-    api._source_shells = cast(Any, [successful_shell, recovering_shell])
-    api._last_fetch_date = None
-    api._fetch_interval_days = 1
-    api._update_sensors_callback = lambda *_: None
-
-    api._fetch()
-    assert api._last_fetch_date is None
-
-    api._fetch()
-    assert api._last_fetch_date is not None
-
-    api._fetch()
-    assert successful_shell.fetch_count == 2
-    assert recovering_shell.fetch_count == 2

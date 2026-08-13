@@ -7,7 +7,7 @@ from typing import Any
 import homeassistant.helpers.config_validation as cv
 import homeassistant.util.dt as dt_util
 import voluptuous as vol
-from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, CONF_VALUE_TEMPLATE
 from homeassistant.core import HomeAssistant, callback
@@ -28,11 +28,9 @@ from .const import (
     CONF_EVENT_INDEX,
     CONF_LEADTIME,
     CONF_SENSORS,
-    CONF_SOURCE_INDEX,
     DOMAIN,
     UPDATE_SENSORS_SIGNAL,
 )
-from .waste_collection_api import WasteCollectionApi
 from .waste_collection_schedule import Collection, CollectionGroup, Icons
 from .wcs_coordinator import WCSCoordinator
 
@@ -51,25 +49,6 @@ class DetailsFormat(Enum):
     hidden = "hidden"  # hide details
 
 
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_NAME): cv.string,
-        vol.Optional(CONF_SOURCE_INDEX, default=0): vol.Any(
-            cv.positive_int, vol.All(cv.ensure_list, [cv.positive_int])
-        ),  # can be a scalar or a list
-        vol.Optional(CONF_DETAILS_FORMAT, default="upcoming"): cv.enum(DetailsFormat),
-        vol.Optional(CONF_COUNT): cv.positive_int,
-        vol.Optional(CONF_LEADTIME): cv.positive_int,
-        vol.Optional(CONF_COLLECTION_TYPES): cv.ensure_list,
-        vol.Optional(CONF_VALUE_TEMPLATE): cv.template,
-        vol.Optional(CONF_DATE_TEMPLATE): cv.template,
-        vol.Optional(CONF_ADD_DAYS_TO, default=False): cv.boolean,
-        vol.Optional(CONF_EVENT_INDEX, default=0): cv.positive_int,
-    }
-)
-
-
-# Config flow setup
 async def async_setup_entry(hass, config: ConfigEntry, async_add_entities):
     coordinator = hass.data[DOMAIN][config.entry_id]
     aggregator = CollectionAggregator([coordinator.shell])
@@ -96,7 +75,6 @@ async def async_setup_entry(hass, config: ConfigEntry, async_add_entities):
         entities.append(
             ScheduleSensor(
                 hass=hass,
-                api=None,
                 coordinator=coordinator,
                 name=sensor.get(CONF_NAME, coordinator.shell.calendar_title),
                 aggregator=aggregator,
@@ -114,98 +92,13 @@ async def async_setup_entry(hass, config: ConfigEntry, async_add_entities):
     async_add_entities(entities, update_before_add=True)
 
 
-# YAML setup (via discovery from waste_collection_schedule: sensors: or legacy sensor platform)
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    if discovery_info is not None:
-        # New method: sensor loaded via discovery from waste_collection_schedule: sensors:
-        api = discovery_info["api"]
-        sensor_config = discovery_info["sensor_config"]
-    else:
-        # Legacy method: sensor: platform: waste_collection_schedule
-        _LOGGER.warning(
-            "Configuration of waste_collection_schedule sensors via "
-            "'sensor: platform: waste_collection_schedule' is deprecated and will be "
-            "removed in a future version. Please move your sensor configuration into "
-            "the 'sensors:' key under 'waste_collection_schedule:' in your "
-            "configuration.yaml"
-        )
-        sensor_config = config
-
-        if DOMAIN not in hass.data:
-            raise Exception(
-                "Waste Collection Schedule integration not set up, please check you configured a source in your configuration.yaml"
-            )
-
-        api = hass.data[DOMAIN].get("YAML_CONFIG")
-
-        if api is None:
-            raise Exception(
-                "Waste Collection Schedule YAML configuration not found, please check you have configured sources under waste_collection_schedule: in your configuration.yaml"
-            )
-
-    value_template = sensor_config.get(CONF_VALUE_TEMPLATE)
-    if value_template is not None:
-        if not isinstance(value_template, Template):
-            value_template = cv.template(value_template)
-        value_template.hass = hass
-
-    date_template = sensor_config.get(CONF_DATE_TEMPLATE)
-    if date_template is not None:
-        if not isinstance(date_template, Template):
-            date_template = cv.template(date_template)
-        date_template.hass = hass
-
-    # create aggregator for all sources
-    source_index = sensor_config.get(CONF_SOURCE_INDEX, 0)
-    if not isinstance(source_index, list):
-        source_index = [source_index]
-
-    shells = []
-    for i in source_index:
-        shell = api.get_shell(i)
-        if shell is None:
-            raise ValueError(
-                f"source_index {i} out of range (0-{len(api.shells) - 1}) please check your sensor configuration"
-            )
-        shells.append(shell)
-
-    aggregator = CollectionAggregator(shells)
-
-    details_format = sensor_config.get(CONF_DETAILS_FORMAT, "upcoming")
-    if isinstance(details_format, str):
-        details_format = DetailsFormat(details_format)
-
-    entities = []
-
-    entities.append(
-        ScheduleSensor(
-            hass=hass,
-            api=api,
-            coordinator=None,
-            name=sensor_config[CONF_NAME],
-            aggregator=aggregator,
-            details_format=details_format,
-            count=sensor_config.get(CONF_COUNT),
-            leadtime=sensor_config.get(CONF_LEADTIME),
-            collection_types=sensor_config.get(CONF_COLLECTION_TYPES),
-            value_template=value_template,
-            date_template=date_template,
-            add_days_to=sensor_config.get(CONF_ADD_DAYS_TO, False),
-            event_index=sensor_config.get(CONF_EVENT_INDEX, 0),
-        )
-    )
-
-    async_add_entities(entities)
-
-
 class ScheduleSensor(SensorEntity):
     """Base for sensors."""
 
     def __init__(
         self,
         hass: HomeAssistant,
-        api: WasteCollectionApi | None,
-        coordinator: WCSCoordinator | None,
+        coordinator: WCSCoordinator,
         name: str,
         aggregator: CollectionAggregator,
         details_format: DetailsFormat,
@@ -218,7 +111,6 @@ class ScheduleSensor(SensorEntity):
         event_index: int | None,
     ):
         """Initialize the entity."""
-        self._api = api
         self._coordinator = coordinator
         self._aggregator = aggregator
         self._details_format = details_format
@@ -234,12 +126,9 @@ class ScheduleSensor(SensorEntity):
 
         # entity attributes
         self._attr_name = name
-        if self._coordinator:
-            shell = self._coordinator.shell
-            self._attr_unique_id = f"{shell.unique_id}_ui_sensor_{name}"
-            self._attr_device_info = self._coordinator.device_info
-        else:
-            self._attr_unique_id = name
+        shell = self._coordinator.shell
+        self._attr_unique_id = f"{shell.unique_id}_ui_sensor_{name}"
+        self._attr_device_info = self._coordinator.device_info
         self._attr_should_poll = False
 
         async_dispatcher_connect(hass, UPDATE_SENSORS_SIGNAL, self._update_sensor)
@@ -248,10 +137,9 @@ class ScheduleSensor(SensorEntity):
         """When entity is added to hass."""
         await super().async_added_to_hass()
 
-        if self._coordinator:
-            self.async_on_remove(
-                self._coordinator.async_add_listener(self._update_sensor, None)
-            )
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._update_sensor, None)
+        )
 
         self._update_sensor()
 
@@ -263,15 +151,11 @@ class ScheduleSensor(SensorEntity):
     @property
     def _separator(self):
         """Return separator string used to join waste types."""
-        if self._api:
-            return self._api.separator
         return self._coordinator.separator
 
     @property
     def _include_today(self):
         """Return true if collections for today shall be included in the results."""
-        if self._api:
-            return dt_util.now().time() < self._api._day_switch_time
         return dt_util.now().time() < self._coordinator.day_switch_time
 
     def _add_refreshtime(self):

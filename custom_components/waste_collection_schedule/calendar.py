@@ -8,7 +8,6 @@ from homeassistant.components.calendar import CalendarEntity, CalendarEvent
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from custom_components.waste_collection_schedule.waste_collection_schedule import (
     Collection,
@@ -24,7 +23,6 @@ from custom_components.waste_collection_schedule.waste_collection_schedule.sourc
 
 from .const import DOMAIN
 from .init_ui import WCSCoordinator
-from .init_yaml import WasteCollectionApi
 
 # fmt: on
 
@@ -39,12 +37,10 @@ class WasteCollectionCalendar(CalendarEntity):
         aggregator: CollectionAggregator,
         name: str,
         unique_id: str,
-        coordinator: WCSCoordinator | None = None,
-        api: WasteCollectionApi | None = None,
+        coordinator: WCSCoordinator,
         include_types: set[str] | None = None,
         exclude_types: set[str] | None = None,
     ):
-        self._api = api
         self._coordinator = coordinator
         self._aggregator = aggregator
         self._name = name
@@ -52,20 +48,15 @@ class WasteCollectionCalendar(CalendarEntity):
         self._exclude_types = exclude_types
         self._unique_id = unique_id
         self._attr_unique_id = unique_id
-
-        if coordinator:
-            self._attr_device_info = coordinator.device_info
+        self._attr_device_info = coordinator.device_info
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
         await super().async_added_to_hass()
 
-        if self._coordinator:
-            self.async_on_remove(
-                self._coordinator.async_add_listener(
-                    self._handle_coordinator_update, None
-                )
-            )
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._handle_coordinator_update, None)
+        )
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -126,8 +117,7 @@ class WasteCollectionCalendar(CalendarEntity):
 
 def create_calendar_entries(
     shells: list[SourceShell],
-    api: WasteCollectionApi | None = None,
-    coordinator: WCSCoordinator | None = None,
+    coordinator: WCSCoordinator,
 ) -> list[WasteCollectionCalendar]:
     entities: list[WasteCollectionCalendar] = []
 
@@ -141,7 +131,6 @@ def create_calendar_entries(
         for type in dedicated_types:
             entities.append(
                 WasteCollectionCalendar(
-                    api=api,
                     coordinator=coordinator,
                     aggregator=aggregator,
                     name=shell.get_calendar_title_for_type(type),
@@ -153,7 +142,6 @@ def create_calendar_entries(
         if aggregator.types != dedicated_calendar_types:
             entities.append(
                 WasteCollectionCalendar(
-                    api=api,
                     coordinator=coordinator,
                     aggregator=aggregator,
                     name=shell.calendar_title,
@@ -165,7 +153,6 @@ def create_calendar_entries(
     return entities
 
 
-# Config flow setup
 async def async_setup_entry(
     hass: HomeAssistant, config: ConfigEntry, async_add_entities: AddEntitiesCallback
 ):
@@ -175,26 +162,6 @@ async def async_setup_entry(
     entities = create_calendar_entries([shell], coordinator=coordinator)
 
     async_add_entities(entities, update_before_add=True)
-
-
-# YAML setup
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-):
-    """Set up calendar platform."""
-    # We only want this platform to be set up via discovery.
-    if discovery_info is None:
-        return
-
-    entities = []
-
-    api: WasteCollectionApi = discovery_info["api"]
-    entities = create_calendar_entries(api.shells, api=api)
-
-    async_add_entities(entities)
 
 
 def calc_unique_calendar_id(shell: SourceShell, type: str | None = None):

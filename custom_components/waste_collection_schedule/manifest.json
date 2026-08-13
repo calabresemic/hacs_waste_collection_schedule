@@ -1,21 +1,15 @@
 {
   "domain": "waste_collection_schedule",
   "name": "Waste Collection Schedule",
-  "codeowners": ["@mampfes"],
+  "codeowners": [
+    "@calabresemic"
+  ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/mampfes/hacs_waste_collection_schedule#readme",
+  "documentation": "https://github.com/calabresemic/hacs_waste_collection_schedule#readme",
+  "issue_tracker": "https://github.com/calabresemic/hacs_waste_collection_schedule/issues",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "requirements": [
-    "pdfminer.six",
-    "icalendar",
-    "icalevents>=0.2.1",
-    "beautifulsoup4",
-    "lxml",
-    "pycryptodome",
-    "pypdf",
-    "curl_cffi>=0.7.0"
-  ],
+  "requirements": [],
   "version": "2.32.0"
 }
