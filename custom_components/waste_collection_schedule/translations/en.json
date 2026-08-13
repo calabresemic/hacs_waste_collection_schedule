@@ -5,20 +5,30 @@
       "already_configured": "This source has already been configured."
     },
     "step": {
-      "user": {
-        "title": "Select Country",
+      "args": {
+        "title": "Configure Source",
+        "description": "Configure your service provider. {howto}More details: {docs_url}.",
         "data": {
-          "country": "Country"
+          "calendar_title": "Calendar Title",
+          "method": "Method",
+          "street_address": "Street Address"
         },
         "data_description": {
-          "country": "Select your country or *Generic* if you want to setup an *ICS* source."
+          "calendar_title": "A more readable, or user-friendly, name for the waste calendar. If nothing is provided, the name returned by the source will be used.",
+          "street_address": "The service address exactly as Republic Services knows it, e.g. 117 Roxie Ln, Georgetown, KY 40324.",
+          "method": "How collection types are named. The first option uses the names the API returns; the second normalises them."
         }
       },
-      "source": {
-        "title": "Select Source",
-        "description": "Select your service provider from the list.",
+      "reconfigure": {
+        "title": "Reconfigure Source",
+        "description": "Configure your service provider. {howto}More details: {docs_url}.",
         "data": {
-          "name": "Source"
+          "method": "Method",
+          "street_address": "Street Address"
+        },
+        "data_description": {
+          "street_address": "The service address exactly as Republic Services knows it, e.g. 117 Roxie Ln, Georgetown, KY 40324.",
+          "method": "How collection types are named. The first option uses the names the API returns; the second normalises them."
         }
       },
       "flow_type": {
@@ -63,16 +73,6 @@
           "dedicated_calendar_title": "The title of the dedicated calendar entity."
         }
       },
-      "args": {
-        "title": "Configure Source",
-        "description": "Configure your service provider. {howto}More details: {docs_url}.",
-        "data": {
-          "calendar_title": "Calendar Title"
-        },
-        "data_description": {
-          "calendar_title": "A more readable, or user-friendly, name for the waste calendar. If nothing is provided, the name returned by the source will be used."
-        }
-      },
       "sensor": {
         "title": "Create Sensor \"{sensor_number}\"",
         "description": "Configure one sensor at a time.",
@@ -101,35 +101,6 @@
           "skip": "If checked the sensor will not be created and all your config above will be ignored.",
           "additional": "If checked you will be prompted to add another sensor after saving this one."
         }
-      },
-      "reconfigure": {
-        "title": "Reconfigure Source",
-        "description": "Configure your service provider. {howto}More details: {docs_url}.",
-        "data": {
-          "calendar_title": "Calendar Title"
-        }
-      },
-      "args_republicservices_com": {
-        "title": "Configure Source",
-        "description": "Configure your service provider. {howto}More details: {docs_url}.",
-        "data": {
-          "calendar_title": "Calendar Title",
-          "method": "Method",
-          "street_address": "Street Address"
-        },
-        "data_description": {
-          "calendar_title": "A more readable, or user-friendly, name for the waste calendar. If nothing is provided, the name returned by the source will be used."
-        }
-      },
-      "reconfigure_republicservices_com": {
-        "title": "Reconfigure Source",
-        "description": "Configure your service provider. {howto}More details: {docs_url}.",
-        "data": {
-          "calendar_title": "Calendar Title",
-          "method": "Method",
-          "street_address": "Street Address"
-        },
-        "data_description": {}
       }
     },
     "error": {

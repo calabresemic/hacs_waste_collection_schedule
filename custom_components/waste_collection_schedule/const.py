@@ -13,10 +13,6 @@ CONFIG_VERSION: Final = 2
 CONFIG_MINOR_VERSION: Final = 13
 
 # Config var names
-CONF_SOURCES: Final = "sources"
-
-CONF_COUNTRY_NAME: Final = "country"
-
 CONF_SOURCE_NAME: Final = "name"
 CONF_SOURCE_ARGS: Final = "args"  # source arguments
 
@@ -48,7 +44,6 @@ CONF_DAY_SWITCH_TIME_DEFAULT: Final = "10:00"
 
 # Sensor config var names
 
-CONF_SOURCE_INDEX: Final = "source_index"
 CONF_DETAILS_FORMAT: Final = "details_format"
 CONF_COUNT: Final = "count"
 CONF_LEADTIME: Final = "leadtime"

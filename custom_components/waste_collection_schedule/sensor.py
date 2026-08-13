@@ -14,11 +14,6 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.template import Template
 
-# fmt: off
-from custom_components.waste_collection_schedule.waste_collection_schedule.collection_aggregator import (
-    CollectionAggregator,
-)
-
 from .const import (
     CONF_ADD_DAYS_TO,
     CONF_COLLECTION_TYPES,
@@ -32,10 +27,8 @@ from .const import (
     UPDATE_SENSORS_SIGNAL,
 )
 from .waste_collection_schedule import Collection, CollectionGroup, Icons
+from .waste_collection_schedule.collection_aggregator import CollectionAggregator
 from .wcs_coordinator import WCSCoordinator
-
-# fmt: on
-
 
 _LOGGER = logging.getLogger(__name__)
 

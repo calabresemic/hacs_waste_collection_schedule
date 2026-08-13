@@ -9,22 +9,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from custom_components.waste_collection_schedule.waste_collection_schedule import (
-    Collection,
-)
-
-# fmt: off
-from custom_components.waste_collection_schedule.waste_collection_schedule.collection_aggregator import (
-    CollectionAggregator,
-)
-from custom_components.waste_collection_schedule.waste_collection_schedule.source_shell import (
-    SourceShell,
-)
-
 from .const import DOMAIN
 from .init_ui import WCSCoordinator
-
-# fmt: on
+from .waste_collection_schedule import Collection
+from .waste_collection_schedule.collection_aggregator import CollectionAggregator
+from .waste_collection_schedule.source_shell import SourceShell
 
 _LOGGER = logging.getLogger(__name__)
 

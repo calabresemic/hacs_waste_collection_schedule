@@ -1,8 +1,9 @@
 from datetime import date, datetime, timedelta
 
 import requests
-from waste_collection_schedule import Collection, Icons  # type: ignore[attr-defined]
-from waste_collection_schedule.exceptions import SourceArgumentNotFound
+
+from .. import Collection, Icons
+from ..exceptions import SourceArgumentNotFound
 
 TITLE = "Republic Services"
 DESCRIPTION = "Source for Republic Services Collection."

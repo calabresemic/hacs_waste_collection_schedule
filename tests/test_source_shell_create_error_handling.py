@@ -1,16 +1,6 @@
-# Make the core library importable as `waste_collection_schedule`. Import the
-# stdlib modules the component shadows (calendar) before extending sys.path.
-import calendar  # noqa: F401
-import os
-import sys
-
-sys.path.append(
-    os.path.join(
-        os.path.dirname(__file__), "../custom_components/waste_collection_schedule"
-    )
+from custom_components.waste_collection_schedule.waste_collection_schedule.source_shell import (
+    SourceShell,
 )
-
-from waste_collection_schedule.source_shell import SourceShell
 
 SOURCE = "republicservices_com"
 

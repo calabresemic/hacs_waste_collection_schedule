@@ -1,20 +1,16 @@
 import asyncio
-import os
-import sys
 from datetime import date
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-sys.path.append(
-    os.path.join(
-        os.path.dirname(__file__), "../custom_components/waste_collection_schedule"
-    )
+from custom_components.waste_collection_schedule.waste_collection_schedule import (
+    Collection,
 )
-
-from waste_collection_schedule import Collection  # isort:skip
-from waste_collection_schedule.source_shell import SourceShell  # isort:skip
+from custom_components.waste_collection_schedule.waste_collection_schedule.source_shell import (
+    SourceShell,
+)
 
 
 def test_source_shell_fetch_reports_success_and_failure() -> None:

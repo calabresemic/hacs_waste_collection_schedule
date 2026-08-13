@@ -266,11 +266,11 @@ class SourceShell:
         # load source module
         try:
             source_module: SourceModule = importlib.import_module(
-                f"waste_collection_schedule.source.{source_name}"
+                f".source.{source_name}", package=__package__
             )
         except ImportError as e:
             if str(e).startswith(
-                f"No module named 'waste_collection_schedule.source.{source_name}'"
+                f"No module named '{__package__}.source.{source_name}'"
             ):
                 _LOGGER.error(f"source not found: {source_name}")
             else:

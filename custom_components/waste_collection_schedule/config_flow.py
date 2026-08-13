@@ -1,11 +1,6 @@
-import importlib
-import inspect
 import json
 import logging
-import types
-from datetime import date, datetime
-from pathlib import Path
-from typing import Any, ClassVar, Literal, TypedDict, Union, cast, get_origin
+from typing import Any, ClassVar
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
@@ -22,7 +17,6 @@ from homeassistant.helpers.selector import (
     DurationSelector,
     DurationSelectorConfig,
     IconSelector,
-    ObjectSelector,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -36,20 +30,11 @@ from homeassistant.helpers.selector import (
 from homeassistant.helpers.translation import async_get_translations
 from voluptuous.schema_builder import UNDEFINED
 
-from waste_collection_schedule.collection import Collection
-from waste_collection_schedule.exceptions import (
-    SourceArgumentException,
-    SourceArgumentExceptionMultiple,
-    SourceArgumentRequired,
-    SourceArgumentSuggestionsExceptionBase,
-)
-
 from .const import (
     CONF_ADD_DAYS_TO,
     CONF_ALIAS,
     CONF_COLLECTION_TYPES,
     CONF_COUNT,
-    CONF_COUNTRY_NAME,
     CONF_CUSTOMIZE,
     CONF_DATE_TEMPLATE,
     CONF_DAY_OFFSET,
@@ -85,65 +70,76 @@ from .const import (
 )
 from .init_ui import WCSCoordinator
 from .sensor import DetailsFormat
+from .waste_collection_schedule.collection import Collection
+from .waste_collection_schedule.exceptions import SourceArgumentException
+from .waste_collection_schedule.source import (
+    republicservices_com as SOURCE_MODULE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-# Load source lists and metadata for configuration
-_SOURCES_FILE = Path(__file__).parent / "sources.json"
-_SOURCE_METADATA_FILE = Path(__file__).parent / "source_metadata.json"
-_SOURCES: dict[str, list[Any]] = {}
-_SOURCE_METADATA: dict[str, dict[str, Any]] = {}
+# --- the single source this fork ships --------------------------------------
+# Upstream discovered sources from sources.json and reflected over each
+# Source.__init__ to build its form. With one source and two arguments that
+# machinery is pure overhead, so the source is imported directly and its form
+# is written out by hand below.
+SOURCE_NAME = "republicservices_com"
+SOURCE_TITLE = SOURCE_MODULE.TITLE
+DOCS_URL = "https://github.com/calabresemic/hacs_waste_collection_schedule#readme"
+HOWTO = (
+    "Enter the service address exactly as Republic Services knows it, e.g. "
+    "`117 Roxie Ln, Georgetown, KY 40324`.\n\n"
+)
 
-
-def _load_sources() -> dict[str, list[Any]]:
-    """Load sources.json with error handling."""
-    try:
-        with open(_SOURCES_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        _LOGGER.error(f"Failed to load sources.json: {e}")
-        return {}
-
-
-def _load_source_metadata() -> dict[str, dict[str, Any]]:
-    """Load source_metadata.json with error handling."""
-    try:
-        with open(_SOURCE_METADATA_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        _LOGGER.warning(f"Failed to load source metadata: {e}")
-        return {}
-
-
-# Initialize both files on module import
-_SOURCES = _load_sources()
-_SOURCE_METADATA = _load_source_metadata()
-
-
-def _get_source_metadata(source: str) -> dict[str, Any]:
-    """Get metadata for a source, with fallback to empty dict."""
-    return _SOURCE_METADATA.get(source, {})
-
-
-SUPPORTED_ARG_TYPES = {
-    str: cv.string,
-    int: cv.positive_int,
-    bool: cv.boolean,
-    list: TextSelector(TextSelectorConfig(multiple=True)),
-    list[str]: TextSelector(TextSelectorConfig(multiple=True)),
-    list[str] | str: TextSelector(TextSelectorConfig(multiple=True)),
-    list[str] | str | None: TextSelector(TextSelectorConfig(multiple=True)),
-    list[str | int]: TextSelector(TextSelectorConfig(multiple=True)),
-    list[date | str]: TextSelector(
-        TextSelectorConfig(multiple=True, type=TextSelectorType.DATE)
+DEFAULT_METHOD = 1
+METHOD_OPTIONS = [
+    SelectOptionDict(
+        value="1", label="Waste type names as Republic Services reports them"
     ),
-    date | str: TextSelector(TextSelectorConfig(type=TextSelectorType.DATE)),
-    date | str | None: TextSelector(TextSelectorConfig(type=TextSelectorType.DATE)),
-    dict: ObjectSelector(),
-    str | int: cv.string,
-    date: cv.date,
-    datetime: cv.datetime,
-}
+    SelectOptionDict(
+        value="2",
+        label="Normalised names (Solid Waste / Recycle / Yard Waste / Bulk Waste)",
+    ),
+]
+
+
+def _suggest(value: Any) -> dict[str, Any] | None:
+    """Pre-fill a form field without making it the schema default."""
+    return None if value is None else {"suggested_value": value}
+
+
+def get_source_arg_schema(
+    pre_filled: dict[str, Any] | None = None,
+    args_input: dict[str, Any] | None = None,
+    include_title: bool = True,
+) -> vol.Schema:
+    """Build the source argument form.
+
+    `args_input` (what the user just typed) wins over `pre_filled` (existing
+    entry data), matching the precedence upstream's generic builder used.
+    """
+    filled = {**(pre_filled or {}), **(args_input or {})}
+
+    fields: dict[Any, Any] = {}
+    if include_title:
+        fields[
+            vol.Optional(
+                CONF_SOURCE_CALENDAR_TITLE,
+                description=_suggest(filled.get(CONF_SOURCE_CALENDAR_TITLE)),
+                default=SOURCE_TITLE,
+            )
+        ] = str
+    fields[
+        vol.Required(
+            "street_address", description=_suggest(filled.get("street_address"))
+        )
+    ] = TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT))
+    fields[
+        vol.Optional("method", default=str(filled.get("method", DEFAULT_METHOD)))
+    ] = SelectSelector(
+        SelectSelectorConfig(options=METHOD_OPTIONS, mode=SelectSelectorMode.LIST)
+    )
+    return vol.Schema(fields)
 
 
 def get_customize_schema(defaults: dict[str, Any] | None = None):
@@ -335,494 +331,94 @@ EXAMPLE_DATE_TEMPLATES = {
 }
 
 
-class SourceDict(TypedDict):
-    title: str
-    module: str
-    default_params: dict[str, Any]
-    id: str
-
-
 class WasteCollectionConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
     """Config flow."""
 
     VERSION = CONFIG_VERSION
     MINOR_VERSION = CONFIG_MINOR_VERSION
-    _country: str | None = None
-    _source: str | None = None
 
+    _title = SOURCE_TITLE
     _options: ClassVar[dict] = {}
-    # Not a ClassVar: the empty dict is only a per-instance "not yet
-    # initialized" sentinel; _async_setup_sources() below rebinds it to the
-    # shared _SOURCES cache on first use.
-    _sources: dict[str, list[SourceDict]] = {}  # noqa: RUF012
-    _error_suggestions: dict[str, list[Any]]
 
-    async def _async_setup_sources(self) -> None:
-        if len(self._sources) > 0:
-            return
+    def _create_source(self, args_input: dict[str, Any]):
+        """Instantiate the source (called in an executor - it may do I/O)."""
+        return SOURCE_MODULE.Source(**args_input)
 
-        # Use pre-loaded sources from module level
-        self._sources = _SOURCES
+    def _description_placeholders(self) -> dict[str, str]:
+        return {"docs_url": DOCS_URL, "howto": HOWTO}
 
-        async def args_method(args_input):
-            return await self.async_step_args(args_input)
-
-        async def reconfigure_method(args_input):
-            return await self.async_step_reconfigure(args_input)
-
-        for sources in self._sources.values():
-            for source in sources:
-                setattr(
-                    self,
-                    f"async_step_args_{source['id']}",
-                    args_method,
-                )
-                setattr(
-                    self,
-                    f"async_step_reconfigure_{source['id']}",
-                    reconfigure_method,
-                )
-
-    # Step 1: User selects country
-    async def async_step_user(
-        self, info: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        await self._async_setup_sources()
-
-        # This fork ships exactly one source, so the country and source pickers
-        # would each be a dropdown with a single entry. Skip both and go
-        # straight to the source arguments. If more sources are ever added back
-        # to sources.json the normal two-step selection returns automatically.
-        available = [
-            (country, source)
-            for country, sources in self._sources.items()
-            for source in sources
-        ]
-        if len(available) == 1:
-            country, source = available[0]
-            self._country = country
-            self._source = source["module"]
-            self._title = source["title"]
-            self._id = source["id"]
-            self._extra_info_default_params = source["default_params"]
-            return await self.async_step_args()
-
-        if info is not None:
-            self._country = info[CONF_COUNTRY_NAME]
-            return await self.async_step_source()
-
-        SCHEMA = vol.Schema(
-            {
-                vol.Required(CONF_COUNTRY_NAME): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[""]
-                        + (["Generic"] if "Generic" in self._sources else [])
-                        + sorted(k for k in self._sources if k != "Generic"),
-                        mode=SelectSelectorMode.DROPDOWN,
-                        sort=False,
-                    )
-                )
-            }
-        )
-        return self.async_show_form(step_id="user", data_schema=SCHEMA)
-
-    # Step 2: User selects source
-    async def async_step_source(
-        self, info: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        self._country = cast(str, self._country)
-        sources = self._sources[self._country]
-        sources_options = [SelectOptionDict(value="", label="")] + [
-            SelectOptionDict(
-                value=f"{x['module']}\t{x['title']}\t{x['id']}",
-                label=f"{x['title']} ({x['module']})",
-            )
-            for x in sources
-        ]
-
-        SCHEMA = vol.Schema(
-            {
-                vol.Required(CONF_SOURCE_NAME): SelectSelector(
-                    SelectSelectorConfig(
-                        options=sources_options,
-                        mode=SelectSelectorMode.DROPDOWN,
-                        sort=True,
-                        multiple=False,
-                        custom_value=True,  # allows to properly search while typing in the dropdown
-                    )
-                )
-            }
-        )
-
-        errors = {}
-        if info is not None:
-            if not (
-                "\t" in info[CONF_SOURCE_NAME]
-                and info[CONF_SOURCE_NAME].split("\t")[0]
-                in [x["module"] for x in sources]
-            ):
-                errors[CONF_SOURCE_NAME] = "invalid_source"
-            else:
-                self._source = info[CONF_SOURCE_NAME].split("\t")[0]
-                self._title = info[CONF_SOURCE_NAME].split("\t")[1]
-                self._id = info[CONF_SOURCE_NAME].split("\t")[2]
-                self._extra_info_default_params = next(
-                    (
-                        x["default_params"]
-                        for x in self._sources[self._country]
-                        if info[CONF_SOURCE_NAME].startswith(
-                            f"{x['module']}\t{x['title']}"
-                        )
-                    ),
-                    {},
-                )
-                return await self.async_step_args()
-
-        return self.async_show_form(step_id="source", data_schema=SCHEMA, errors=errors)
-
-    async def __get_simple_annotation_type(self, annotation: Any) -> Any:
-        if annotation in SUPPORTED_ARG_TYPES:
-            return SUPPORTED_ARG_TYPES[annotation]
-        if (
-            isinstance(annotation, types.GenericAlias)
-            and annotation.__origin__ in SUPPORTED_ARG_TYPES
-        ):
-            return SUPPORTED_ARG_TYPES[annotation.__origin__]
-
-        if getattr(annotation, "__origin__", None) is Literal:
-            return SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(label=x, value=x)
-                        for x in annotation.__args__
-                        if x is not None
-                    ],
-                    custom_value=False,
-                    multiple=False,
-                )
-            )
-        return None
-
-    async def __get_type_by_annotation(self, annotation: Any) -> Any:
-        if a := await self.__get_simple_annotation_type(annotation):
-            return a
-        if (isinstance(annotation, types.GenericAlias)) or (
-            (get_origin(annotation) is not None and hasattr(annotation, "__origin__"))
-            and (a := await self.__get_simple_annotation_type(annotation.__origin__))
-        ):
-            return a
-        return_val = None
-        is_string = False
-
-        if (
-            isinstance(annotation, types.UnionType)
-            or getattr(annotation, "__origin__", None) is Union
-        ):
-            for arg in annotation.__args__:
-                if a := await self.__get_type_by_annotation(arg):
-                    if isinstance(a, ObjectSelector):
-                        return a
-                    if not is_string:
-                        return_val = a
-                    is_string = a == cv.string
-        return return_val
-
-    async def __get_arg_schema(
-        self,
-        source: str,
-        pre_filled: dict[str, Any],
-        args_input: dict[str, Any] | None,
-        include_title=True,
-    ) -> tuple[vol.Schema, types.ModuleType]:
-        """Get schema for source arguments.
-
-        Args:
-            source (str): source name
-            pre_filled (dict[str, Any]): arguments that are pre-filled (description suggested_value)
-            args_input (dict[str, Any] | None): user input used to pre-fill the form with higher priority than pre_filled
-            include_title (bool, optional): weather to include the title name field (only used on initial configure not on reconfigure). Defaults to True.
-
-        Returns:
-            Tuple[vol.Schema, types.ModuleType]: schema, module
-        """
-        suggestions: dict[str, list[Any]] = {}
-        if hasattr(self, "_error_suggestions"):
-            suggestions = {
-                key: value
-                for key, value in self._error_suggestions.items()
-                if len(value) > 0
-            }
-
-        # Import source and get arguments
-        module = await self.hass.async_add_executor_job(
-            importlib.import_module, f"waste_collection_schedule.source.{source}"
-        )
-
-        args = dict(inspect.signature(module.Source.__init__).parameters)
-        del args["self"]  # Remove self
-        # Convert schema for vol
-        vol_args = {}
-        title = source  # Default title Should probably be overwritten by the module
-        if hasattr(module, "TITLE") and isinstance(module.TITLE, str):
-            title = module.TITLE
-        if hasattr(self, "_title") and isinstance(self._title, str):
-            title = self._title
-
-        if include_title:
-            description = None
-            if args_input is not None and CONF_SOURCE_CALENDAR_TITLE in args_input:
-                description = {
-                    "suggested_value": args_input[CONF_SOURCE_CALENDAR_TITLE]
-                }
-            vol_args = {
-                vol.Optional(
-                    CONF_SOURCE_CALENDAR_TITLE,
-                    description=description,
-                    default=title,
-                ): str,
-            }
-
-        MODULE_FLOW_TYPES = (
-            module.CONFIG_FLOW_TYPES if hasattr(module, "CONFIG_FLOW_TYPES") else {}
-        )
-
-        for arg in args:
-            default = args[arg].default
-            arg_name = args[arg].name
-            field_type = None
-
-            annotation = args[arg].annotation
-            description = None
-            if args_input is not None and arg_name in args_input:
-                description = {"suggested_value": args_input[arg_name]}
-                _LOGGER.debug(
-                    f"Setting suggested value for {arg_name} to {args_input[arg_name]} (previously filled in)"
-                )
-            elif arg_name in pre_filled:
-                _LOGGER.debug(
-                    f"Setting default value for {arg_name} to {pre_filled[arg_name]}"
-                )
-                description = {
-                    "suggested_value": pre_filled[arg_name],
-                }
-            if annotation != inspect._empty:
-                field_type = (
-                    await self.__get_type_by_annotation(annotation) or field_type
-                )
-            _LOGGER.debug(
-                f"Default for {arg_name}: {type(default) if default is not inspect.Signature.empty else inspect.Signature.empty}"
-            )
-
-            if arg_name in MODULE_FLOW_TYPES:
-                flow_type = MODULE_FLOW_TYPES[arg_name]
-                if flow_type.get("type") == "SELECT":
-                    field_type = SelectSelector(
-                        SelectSelectorConfig(
-                            options=[
-                                SelectOptionDict(label=x, value=x)
-                                for x in flow_type.get("values")
-                            ],
-                            translation_key="custom_flow_types",
-                            mode=SelectSelectorMode.DROPDOWN,
-                            multiple=flow_type.get("multiple", False),
-                        )
-                    )
-
-            if field_type is None:
-                field_type = SUPPORTED_ARG_TYPES.get(type(default))
-
-            if (
-                (field_type or str) in (str, cv.string)
-                or (
-                    isinstance(field_type, TextSelector)
-                    and "multiple" in field_type.config
-                    and field_type.config.get("type", TextSelectorType.TEXT)
-                    == TextSelectorType.TEXT
-                    and field_type.config["multiple"]
-                )
-            ) and args[arg].name in suggestions:
-                _LOGGER.debug(
-                    f"Adding suggestions to {arg_name}: {suggestions[arg_name]}"
-                )
-                # Add suggestions to the field if fetch/init raised an Exception with suggestions
-                field_type = SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(label=x, value=x)
-                            for x in suggestions[arg_name]
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
-                        multiple=isinstance(field_type, TextSelector),
-                    )
-                )
-
-            if default == inspect.Signature.empty:
-                vol_args[vol.Required(arg_name, description=description)] = (
-                    field_type or str
-                )
-
-            elif field_type or (default is None):
-                # Handle boolean, int, string, date, datetime, list defaults
-                vol_args[
-                    vol.Optional(
-                        arg_name,
-                        default=UNDEFINED if default is None else default,
-                        description=description,
-                    )
-                ] = field_type or cv.string
-            else:
-                _LOGGER.debug(
-                    f"Unsupported type: {type(default)}: {arg_name}: {default}: {field_type}"
-                )
-
-        schema = vol.Schema(vol_args)
-        return schema, module
-
-    async def __validate_args_user_input(
-        self,
-        source: str,
-        args_input: dict[str, Any],
-        module: types.ModuleType,
-        is_reconfigure: bool = False,
+    async def _validate_args(
+        self, args_input: dict[str, Any], is_reconfigure: bool = False
     ) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
-        """Validate user input for source arguments.
+        """Instantiate the source and fetch once to prove the args work.
 
-        Args:
-            source (str): source name
-            args_input (dict[str, Any]): user input
-            module (types.ModuleType): the module of the source
-            is_reconfigure (bool): when True, skip the unique_id collision check
-                because the existing entry legitimately owns that unique_id.
-
-        Returns:
-            Tuple[dict, dict, dict]: errors, description_placeholders, options
+        Returns (errors, description_placeholders, options).
         """
-        errors = {}
-        description_placeholders: dict[str, str] = {}
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {}
+        options: dict[str, Any] = {}
 
-        if hasattr(module, "validate_params"):
-            errors.update(module.validate_params(args_input))
-        options = {}
-
-        # Pop title if provided
         if CONF_SOURCE_CALENDAR_TITLE in args_input:
             options[CONF_SOURCE_CALENDAR_TITLE] = args_input.pop(
                 CONF_SOURCE_CALENDAR_TITLE
             )
 
-        await self.async_set_unique_id(source + json.dumps(args_input))
+        # The dropdown hands back a string; entries have always stored an int.
+        if "method" in args_input:
+            args_input["method"] = int(args_input["method"])
+
+        await self.async_set_unique_id(SOURCE_NAME + json.dumps(args_input))
         if not is_reconfigure:
-            # During reconfigure the existing entry already owns this unique_id;
-            # skipping the check prevents HA from aborting and creating a duplicate.
+            # On reconfigure the existing entry already owns this unique_id.
             self._abort_if_unique_id_configured()
 
         try:
             instance = await self.hass.async_add_executor_job(
-                self._get_source_instance, module, args_input
+                self._create_source, args_input
             )
-
             resp: list[Collection] = await self.hass.async_add_executor_job(
                 instance.fetch
             )
-
             if len(resp) == 0:
                 errors["base"] = "fetch_empty"
             self._fetched_types = list({x.type.strip() for x in resp})
-        except SourceArgumentSuggestionsExceptionBase as e:
-            if not hasattr(self, "_error_suggestions"):
-                self._error_suggestions = {}
-            self._error_suggestions.update({e.argument: e.suggestions})
-            errors[e.argument] = "invalid_arg"
-            description_placeholders["invalid_arg_message"] = e.simple_message
-            if e.suggestion_type != str and e.suggestion_type != int:
-                description_placeholders["invalid_arg_message"] = e.message
-        except SourceArgumentRequired as e:
-            errors[e.argument] = "invalid_arg"
-            description_placeholders["invalid_arg_message"] = e.message
         except SourceArgumentException as e:
             errors[e.argument] = "invalid_arg"
-            description_placeholders["invalid_arg_message"] = e.message
-        except SourceArgumentExceptionMultiple as e:
-            description_placeholders["invalid_arg_message"] = e.message
-            if len(e.arguments) == 0:
-                errors["base"] = "invalid_arg"
-            else:
-                for arg in e.arguments:
-                    errors[f"{source}_{arg}"] = "invalid_arg"
+            placeholders["invalid_arg_message"] = e.message
         except Exception as e:
             errors["base"] = "fetch_error"
-            description_placeholders["fetch_error_message"] = str(e)
-        return errors, description_placeholders, options
+            placeholders["fetch_error_message"] = str(e)
 
-    def _get_source_instance(self, module, args_input: dict[str, Any]):
-        kwargs = args_input
-        return module.Source(**kwargs)
+        return errors, placeholders, options
 
-    def _get_description_placeholders(self, source: str) -> dict[str, str]:
-        """Get description placeholders (URLs and howto) for a source."""
-        placeholders: dict[str, str] = {}
-        if source in _SOURCE_METADATA:
-            metadata = _SOURCE_METADATA[source]
-            placeholders["docs_url"] = metadata.get("docs_url", "")
-            placeholders.update(metadata.get("urls", {}))
-            # Get howto for current language (defaults to English)
-            howto_dict = metadata.get("howto", {})
-            # Try to get howto for the current language
-            hass = getattr(self, "hass", None)
-            language = getattr(getattr(hass, "config", None), "language", "en")
-            placeholders["howto"] = howto_dict.get(language, howto_dict.get("en", ""))
-            if placeholders["howto"]:
-                placeholders["howto"] = placeholders["howto"].rstrip("\n") + "\n\n"
-        return placeholders
-
-    async def async_source_selected(self) -> None:
-        async def args_method(args_input):
-            return await self.async_step_args(args_input)
-
-        setattr(
-            self,
-            f"async_step_args_{self._id}",
-            args_method,
-        )
+    # Step 1: source arguments. Upstream asked for a country and a provider
+    # first; with one source there is nothing to pick, so this is the entry
+    # point straight into the form.
+    async def async_step_user(
+        self, info: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         return await self.async_step_args()
 
-    # Step 3: User fills in source arguments
     async def async_step_args(self, args_input=None) -> ConfigFlowResult:
-        self._source = cast(str, self._source)
-        schema, module = await self.__get_arg_schema(
-            self._source, self._extra_info_default_params, args_input
-        )
         errors: dict[str, str] = {}
-        description_placeholders: dict[str, str] = self._get_description_placeholders(
-            self._id
-        )
-        # If all args are filled in
-        if args_input is not None:
-            # if contains method:
-            (
-                errors,
-                validation_placeholders,
-                options,
-            ) = await self.__validate_args_user_input(self._source, args_input, module)
+        description_placeholders = self._description_placeholders()
 
-            if len(errors) > 0:
-                schema, module = await self.__get_arg_schema(
-                    self._source, self._extra_info_default_params, args_input
-                )
-                # Update placeholders with validation errors
-                description_placeholders.update(validation_placeholders)
-            else:
+        if args_input is not None:
+            errors, validation_placeholders, options = await self._validate_args(
+                args_input
+            )
+            if not errors:
                 self._args_data = {
-                    CONF_SOURCE_NAME: self._source,
+                    CONF_SOURCE_NAME: SOURCE_NAME,
                     CONF_SOURCE_ARGS: args_input,
                 }
                 self._options.update(options)
-                self.async_show_form(step_id="options")
                 return await self.async_step_flow_type()
+            description_placeholders.update(validation_placeholders)
+
         return self.async_show_form(
-            step_id=f"args_{self._id}",
-            data_schema=schema,
+            step_id="args",
+            data_schema=get_source_arg_schema(args_input=args_input),
             errors=errors,
             description_placeholders=description_placeholders,
         )
@@ -962,52 +558,43 @@ class WasteCollectionConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call
         return WasteCollectionOptionsFlow(config_entry)
 
     async def async_step_reconfigure(self, args_input: dict[str, Any] | None = None):
-        await self._async_setup_sources()
-
         config_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
         if config_entry is None:
             return self.async_abort(reason="reconfigure_failed")
 
-        source = config_entry.data["name"]
-        schema, module = await self.__get_arg_schema(
-            source, config_entry.data["args"], args_input, include_title=False
-        )
-        title = module.TITLE
         errors: dict[str, str] = {}
-        description_placeholders: dict[str, str] = self._get_description_placeholders(
-            source
-        )
-        # If all args are filled in
+        description_placeholders = self._description_placeholders()
+
         if args_input is not None:
-            # if contains method:
-            (
-                errors,
-                validation_placeholders,
-                options,
-            ) = await self.__validate_args_user_input(
-                source, args_input, module, is_reconfigure=True
+            errors, validation_placeholders, options = await self._validate_args(
+                args_input, is_reconfigure=True
             )
-            # Update placeholders with validation errors
             description_placeholders.update(validation_placeholders)
-            if len(errors) == 0:
+            if not errors:
                 data = {**config_entry.data}
-                data.update({CONF_SOURCE_NAME: source, CONF_SOURCE_ARGS: args_input})
-                # Preserve existing options (sensors, customizations, etc.)
-                # and only update the fields returned by validation
-                merged_options = {**config_entry.options, **options}
+                data.update(
+                    {CONF_SOURCE_NAME: SOURCE_NAME, CONF_SOURCE_ARGS: args_input}
+                )
+                # Preserve existing options (sensors, customizations, ...) and
+                # only overwrite what validation returned.
                 return self.async_update_reload_and_abort(
                     config_entry,
-                    title=title,
+                    title=SOURCE_TITLE,
                     unique_id=config_entry.unique_id,
                     data=data,
-                    options=merged_options,
+                    options={**config_entry.options, **options},
                     reason="reconfigure_successful",
                 )
+
         return self.async_show_form(
-            step_id=f"reconfigure_{source}",
-            data_schema=schema,
+            step_id="reconfigure",
+            data_schema=get_source_arg_schema(
+                pre_filled=config_entry.data["args"],
+                args_input=args_input,
+                include_title=False,
+            ),
             errors=errors,
             description_placeholders=description_placeholders,
         )

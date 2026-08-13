@@ -17,8 +17,8 @@ Add this repository to HACS as a custom repository (category: Integration),
 install it, and restart Home Assistant. Then add the integration under
 **Settings → Devices & Services → Add Integration → Waste Collection Schedule**.
 
-Because there is only one source, the country and provider pickers are skipped
-and configuration starts directly at the source arguments.
+Because there is only one source, the country and provider pickers are gone
+entirely - configuration starts directly at the source arguments.
 
 ## Configuration
 
@@ -54,7 +54,6 @@ custom_components/waste_collection_schedule/
 ├── __init__.py, init_ui.py, config_flow.py   # HA integration + UI config flow
 ├── calendar.py, sensor.py, service.py        # entities and the fetch_data service
 ├── wcs_coordinator.py                        # update coordinator
-├── sources.json, source_metadata.json        # the single source entry + its help text
 ├── translations/en.json                      # English UI strings only
 └── waste_collection_schedule/
     ├── collection.py, collection_aggregator.py, icons.py, exceptions.py
