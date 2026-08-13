@@ -1,17 +1,16 @@
 ---
 name: Publish release
 
-# Pushing a tag like v2.34.0 publishes the matching GitHub release, which is
+# Pushing a tag like v2.35.0 publishes the matching GitHub release, which is
 # what HACS actually reads (it calls the releases API - a bare tag is invisible
 # to it, and drafts are skipped silently).
+#
+# To publish an existing tag by hand, run this workflow from the Actions tab
+# and pick the tag in the "Use workflow from" selector.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing tag to publish a release for (e.g. v2.34.0)
-        required: true
 
 permissions:
   contents: write
@@ -25,17 +24,21 @@ jobs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ inputs.tag || github.ref }}
 
       - name: Resolve tag
         id: tag
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          tag="${{ inputs.tag || github.ref_name }}"
-          echo "tag=$tag" >>"$GITHUB_OUTPUT"
-          # A tag with a hyphen (v2.34.0-beta.1) is a prerelease: HACS hides
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "::error::This workflow must be run from a tag, not a branch. \
+          Pick a tag in the 'Use workflow from' selector."
+            exit 1
+          fi
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+          # A tag with a hyphen (v2.35.0-beta.1) is a prerelease: HACS hides
           # those unless "show beta versions" is enabled for the repository.
-          case "$tag" in
+          case "$TAG" in
             *-*) echo "prerelease=true" >>"$GITHUB_OUTPUT" ;;
             *)   echo "prerelease=false" >>"$GITHUB_OUTPUT" ;;
           esac
@@ -44,39 +47,22 @@ jobs:
       # If they drift, HACS offers an update that installs the same version
       # forever, so treat a mismatch as a hard failure.
       - name: Verify manifest version matches the tag
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          tag="${{ steps.tag.outputs.tag }}"
           manifest=$(jq -r .version \
             custom_components/waste_collection_schedule/manifest.json)
-          echo "tag=$tag manifest=$manifest"
-          if [ "${tag#v}" != "$manifest" ]; then
-            echo "::error::Tag $tag does not match manifest.json version $manifest - bump the manifest, or retag."
+          echo "tag=$TAG manifest=$manifest"
+          if [ "${TAG#v}" != "$manifest" ]; then
+            echo "::error::Tag $TAG does not match manifest.json version $manifest - bump the manifest, or retag."
             exit 1
           fi
 
+  # Same checks master gets, run against the tagged commit.
   test:
     name: Test
     needs: check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.check.outputs.tag }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-          cache: pip
-          cache-dependency-path: requirements.txt
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff pytest -r requirements.txt
-      - name: Lint
-        run: ruff check .
-      - name: Import the integration
-        run: python -c "from custom_components.waste_collection_schedule import config_flow"
-      - name: Test
-        run: pytest
+    uses: ./.github/workflows/validate.yaml
 
   publish:
     name: Publish
@@ -84,28 +70,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.check.outputs.tag }}
-          fetch-depth: 0
 
       # --generate-notes fills the body from the commits since the previous
       # release. --verify-tag refuses to invent a tag that isn't pushed.
+      #
+      # The releases API returns a transient 502 often enough to fail a run, so
+      # this retries. Every attempt re-checks whether the release exists first:
+      # a 502 can be returned *after* the release was created, and blindly
+      # retrying would then fail with "already exists".
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.check.outputs.tag }}
           PRERELEASE: ${{ needs.check.outputs.prerelease }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists - nothing to do."
-            exit 0
-          fi
-          flags=""
+          base=(--title "$TAG" --verify-tag)
           if [ "$PRERELEASE" = "true" ]; then
-            flags="--prerelease"
+            base+=(--prerelease)
           fi
-          # shellcheck disable=SC2086
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --generate-notes \
-            --verify-tag $flags
+
+          for attempt in 1 2 3; do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG exists - nothing left to do."
+              exit 0
+            fi
+
+            # Note generation is the heaviest part of the request. If two
+            # attempts with it have failed, try once without, so a server-side
+            # timeout there cannot block the release itself.
+            args=("${base[@]}")
+            if [ "$attempt" -eq 3 ]; then
+              echo "Retrying without --generate-notes; add notes by hand if this succeeds."
+              args+=(--notes "Release $TAG")
+            else
+              args+=(--generate-notes)
+            fi
+
+            if gh release create "$TAG" "${args[@]}"; then
+              exit 0
+            fi
+
+            echo "Attempt $attempt failed."
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 20))
+            fi
+          done
+
+          echo "::error::Could not publish $TAG after 3 attempts. If it is still an HTTP 5xx, it is a GitHub API problem - check githubstatus.com and re-run."
+          exit 1
