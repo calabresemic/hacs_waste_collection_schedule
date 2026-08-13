@@ -1,9 +1,0 @@
-{
-  "republicservices_com": {
-    "docs_url": "https://github.com/calabresemic/hacs_waste_collection_schedule#readme",
-    "howto": {
-      "en": "Enter the service address exactly as Republic Services knows it, e.g. `117 Roxie Ln, Georgetown, KY 40324`.\n\n`method` controls the waste type names: `1` uses the names Republic Services returns, `2` maps them to Solid Waste / Recycle / Yard Waste / Bulk Waste."
-    },
-    "urls": {}
-  }
-}
