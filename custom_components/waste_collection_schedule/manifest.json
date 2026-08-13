@@ -7,9 +7,9 @@
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/calabresemic/hacs_waste_collection_schedule#readme",
-  "issue_tracker": "https://github.com/calabresemic/hacs_waste_collection_schedule/issues",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/calabresemic/hacs_waste_collection_schedule/issues",
   "requirements": [],
   "version": "2.34.0"
 }
